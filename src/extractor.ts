@@ -407,10 +407,15 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
         return Array.from(el.children).flatMap((child) => renderMarkdown(child, listDepth));
       }
 
-      function listKindFromAceLine(el: Element): "ol" | "ul" | undefined {
+      function listMetaFromAceLine(el: Element): { kind: "ol" | "ul" | "indent"; level: number; text: string } | undefined {
         const className = String(el.className || "");
         if (!className.includes("list-div")) return undefined;
-        return /(?:^|\s)ol-/.test(className) ? "ol" : "ul";
+        const listEl = el.querySelector("ol.r-list, ul.r-list, ol[class*='list-'], ul[class*='list-']");
+        const listClass = String(listEl?.className || "");
+        const level = Number.parseInt(listClass.match(/list-(?:number|bullet|indent)(\d+)/)?.[1] || "1", 10);
+        const kind = listClass.includes("list-indent") ? "indent" : listEl ? (listEl.tagName.toLowerCase() === "ol" ? "ol" : "ul") : /(?:^|\s)ol-/.test(className) ? "ol" : "ul";
+        const text = inlineLarkXml(el);
+        return text ? { kind, level: Number.isFinite(level) ? level : 1, text } : undefined;
       }
 
       function fallbackAceHeadingTag(el: Element): "h3" | "h4" | "h5" | undefined {
@@ -544,6 +549,12 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
         }
       }
 
+      function cleanImageCaption(value: string | null | undefined): string | undefined {
+        const text = value?.trim();
+        if (!text || text === "图片" || /^GIF 图片\s*\d*$/i.test(text)) return undefined;
+        return text;
+      }
+
       function renderLarkXml(root: Element, title: string): { xml: string; gifAnchors: Array<{ anchor: string; src: string; caption?: string; order: number }> } {
         const parts: string[] = [`<title>${xmlEscape(title || document.title || "网页正文")}</title>`];
         const gifAnchors: Array<{ anchor: string; src: string; caption?: string; order: number }> = [];
@@ -579,14 +590,14 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
           return rows.map((row) => {
             if (row.length === 1) {
               const img = row[0];
-              return imageXml(imageSource(img), img.getAttribute("alt") || img.getAttribute("title") || undefined);
+              return imageXml(imageSource(img), cleanImageCaption(img.getAttribute("alt") || img.getAttribute("title")));
             }
             const totalWidth = row.reduce((sum, img) => sum + Math.max(img.getBoundingClientRect().width, 1), 0);
             const columns = row
               .map((img) => {
                 const ratio = Math.max(img.getBoundingClientRect().width, 1) / totalWidth;
                 const widthRatio = Math.round(ratio * 1000) / 1000;
-                const content = imageXml(imageSource(img), img.getAttribute("alt") || img.getAttribute("title") || undefined);
+                const content = imageXml(imageSource(img), cleanImageCaption(img.getAttribute("alt") || img.getAttribute("title")));
                 return `<column width-ratio="${widthRatio}">${content}</column>`;
               })
               .join("");
@@ -620,27 +631,71 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
             .map(fontSizePx)
         );
 
-        let openList: "ol" | "ul" | undefined;
-        const closeList = () => {
-          if (openList) {
-            parts.push(`</${openList}>`);
-            openList = undefined;
+        type ListLine = { kind: "ol" | "ul" | "indent"; level: number; text: string };
+        type ListItemNode = { text: string; children: ListBlockNode[] };
+        type ListBlockNode = { type: "list"; kind: "ol" | "ul"; items: ListItemNode[] } | { type: "p"; text: string };
+        const listGroup: ListLine[] = [];
+        const renderListBlocks = (blocks: ListBlockNode[], inList = false): string =>
+          blocks
+            .map((block) => {
+              if (block.type === "p") return inList ? `<br/>${block.text}` : `<p>${block.text}</p>`;
+              const children = block.items
+                .map((item) => {
+                  const nested = renderListBlocks(item.children, true);
+                  return block.kind === "ol" ? `<li seq="auto">${item.text}${nested}</li>` : `<li>${item.text}${nested}</li>`;
+                })
+                .join("");
+              return `<${block.kind}>${children}</${block.kind}>`;
+            })
+            .join("");
+        const renderListGroup = (lines: ListLine[]): string => {
+          const root: ListBlockNode[] = [];
+          const stack: Array<{ container: Extract<ListBlockNode, { type: "list" }>; item: ListItemNode } | undefined> = [];
+
+          for (const line of lines) {
+            const level = Math.max(1, line.level);
+
+            if (line.kind === "indent") {
+              const deeperTarget = stack
+                .slice(level + 1)
+                .reverse()
+                .find(Boolean)?.item;
+              const target = deeperTarget || stack[level]?.item || stack[level - 1]?.item;
+              const paragraph: ListBlockNode = { type: "p", text: line.text };
+              if (target) target.children.push(paragraph);
+              else root.push(paragraph);
+              continue;
+            }
+
+            for (let index = level + 1; index < stack.length; index += 1) stack[index] = undefined;
+
+            const parent = level === 1 ? undefined : stack[level - 1]?.item || stack.slice(1, level).reverse().find(Boolean)?.item;
+            const parentChildren = parent ? parent.children : root;
+            const current = stack[level]?.container;
+            const container =
+              current && current.kind === line.kind && parentChildren[parentChildren.length - 1] === current
+                ? current
+                : ({ type: "list", kind: line.kind, items: [] } satisfies Extract<ListBlockNode, { type: "list" }>);
+            if (parentChildren[parentChildren.length - 1] !== container) parentChildren.push(container);
+
+            const item: ListItemNode = { text: line.text, children: [] };
+            container.items.push(item);
+            stack[level] = { container, item };
           }
+
+          return renderListBlocks(root);
         };
-        const appendListItem = (kind: "ol" | "ul", text: string) => {
-          if (openList !== kind) {
-            closeList();
-            parts.push(`<${kind}>`);
-            openList = kind;
-          }
-          parts.push(kind === "ol" ? `<li seq="auto">${text}</li>` : `<li>${text}</li>`);
+        const flushListGroup = () => {
+          if (!listGroup.length) return;
+          parts.push(renderListGroup(listGroup));
+          listGroup.length = 0;
         };
 
         for (const el of aceLines) {
           if (!visible(el) || isNoiseElement(el)) continue;
           const className = String(el.className || "");
           if (className.includes("ace-line-image-wrapper")) {
-            closeList();
+            flushListGroup();
             const images = Array.from(el.querySelectorAll("img")).filter((img) => Boolean(imageSource(img)));
             parts.push(...renderImageRows(images));
             continue;
@@ -649,18 +704,18 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
           const text = inlineLarkXml(el);
           if (!text) continue;
 
-          const listKind = listKindFromAceLine(el);
-          if (listKind) {
-            appendListItem(listKind, text);
+          const listMeta = listMetaFromAceLine(el);
+          if (listMeta) {
+            listGroup.push(listMeta);
             continue;
           }
 
-          closeList();
+          flushListGroup();
           const headingTag = visualHeadingTag(el, bodyFontSize, el.textContent || "");
           if (headingTag) parts.push(`<${headingTag}>${text}</${headingTag}>`);
           else parts.push(`<p>${text}</p>`);
         }
-        closeList();
+        flushListGroup();
         return { xml: parts.join("\n"), gifAnchors };
       }
 
@@ -941,6 +996,12 @@ function isGifPathOrUrl(value: string | undefined): boolean {
   return /\.gif(?:$|[?#])/i.test(value);
 }
 
+function cleanDefaultImageCaption(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  if (!text || text === "图片" || /^GIF 图片\s*\d*$/i.test(text)) return undefined;
+  return text;
+}
+
 function applyGifAnchorsFromCachedImages(xml: string | undefined, existingAnchors: LarkGifAnchor[] | undefined, images: ImageInfo[]): { xml?: string; gifAnchors?: LarkGifAnchor[] } {
   if (!xml) return { xml, gifAnchors: existingAnchors };
 
@@ -957,7 +1018,9 @@ function applyGifAnchorsFromCachedImages(xml: string | undefined, existingAnchor
 
     const order = gifAnchors.length;
     const anchor = `__MCP_GIF_ANCHOR_${order + 1}_${crypto.createHash("sha1").update(image.absoluteUrl).digest("hex").slice(0, 8)}__`;
-    const caption = decodeXmlAttribute(match[0].match(/\bcaption="([^"]*)"/)?.[1] ?? image.caption ?? image.alt ?? image.title ?? "图片");
+    const caption = cleanDefaultImageCaption(
+      decodeXmlAttribute(match[0].match(/\bcaption="([^"]*)"/)?.[1] ?? image.caption ?? image.alt ?? image.title ?? "")
+    );
     gifAnchors.push({ anchor, src: image.absoluteUrl, caption, order });
     alreadyAnchored.add(image.absoluteUrl);
     result = result.replace(imageTagPattern, `<p>${anchor}</p>`);
