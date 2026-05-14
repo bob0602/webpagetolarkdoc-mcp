@@ -242,6 +242,9 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
         function xmlEscape(value) {
             return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>").trim();
         }
+        function xmlText(value) {
+            return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>");
+        }
         function xmlAttr(value) {
             return xmlEscape(value).replace(/"/g, "&quot;");
         }
@@ -378,6 +381,91 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                 return undefined;
             return /(?:^|\s)ol-/.test(className) ? "ol" : "ul";
         }
+        function aceHeadingTag(el) {
+            const className = String(el.className || "");
+            // Feishu Help Center ace-line heading classes are one level higher than their visual/article hierarchy.
+            if (className.includes("heading-h2"))
+                return "h3";
+            if (className.includes("heading-h3"))
+                return "h4";
+            if (className.includes("heading-h4"))
+                return "h5";
+            return undefined;
+        }
+        function inlineLarkXml(root) {
+            const ignoredInlineTags = new Set(["script", "style", "noscript", "template", "img"]);
+            const rootElement = root;
+            function hasStyledAncestor(node, predicate) {
+                let current = node.parentElement;
+                while (current && current !== rootElement.parentElement) {
+                    if (predicate(current))
+                        return true;
+                    if (current === rootElement)
+                        break;
+                    current = current.parentElement;
+                }
+                return false;
+            }
+            function currentLink(node) {
+                let current = node.parentElement;
+                while (current && current !== rootElement.parentElement) {
+                    if (current instanceof HTMLAnchorElement && current.href)
+                        return current.href;
+                    if (current === rootElement)
+                        break;
+                    current = current.parentElement;
+                }
+                return undefined;
+            }
+            function wrapText(rawText, source) {
+                const text = rawText.replace(/[\u200b-\u200d\ufeff]/g, "").replace(/\s+/g, " ");
+                if (!text.trim())
+                    return "";
+                const href = currentLink(source);
+                const bold = hasStyledAncestor(source, (el) => {
+                    const tag = el.tagName.toLowerCase();
+                    const weight = Number.parseInt(window.getComputedStyle(el).fontWeight, 10);
+                    return tag === "strong" || tag === "b" || weight >= 600;
+                });
+                const italic = hasStyledAncestor(source, (el) => {
+                    const tag = el.tagName.toLowerCase();
+                    return tag === "em" || tag === "i" || window.getComputedStyle(el).fontStyle === "italic";
+                });
+                const deleted = hasStyledAncestor(source, (el) => {
+                    const tag = el.tagName.toLowerCase();
+                    return tag === "del" || tag === "s";
+                });
+                const underline = hasStyledAncestor(source, (el) => {
+                    const tag = el.tagName.toLowerCase();
+                    return tag === "u" || window.getComputedStyle(el).textDecorationLine.includes("underline");
+                });
+                const code = hasStyledAncestor(source, (el) => el.tagName.toLowerCase() === "code");
+                let content = xmlText(text);
+                if (code)
+                    content = `<code>${content}</code>`;
+                if (underline)
+                    content = `<u>${content}</u>`;
+                if (deleted)
+                    content = `<del>${content}</del>`;
+                if (italic)
+                    content = `<em>${content}</em>`;
+                if (bold)
+                    content = `<b>${content}</b>`;
+                if (href)
+                    content = `<a href="${xmlAttr(href)}">${content}</a>`;
+                return content;
+            }
+            function renderNode(node) {
+                if (node.nodeType === Node.TEXT_NODE)
+                    return wrapText(node.textContent ?? "", node);
+                if (!(node instanceof Element) || !visible(node) || ignoredInlineTags.has(node.tagName.toLowerCase()))
+                    return "";
+                if (node.tagName.toLowerCase() === "br")
+                    return "<br/>";
+                return Array.from(node.childNodes).map(renderNode).join("");
+            }
+            return Array.from(root.childNodes).map(renderNode).join("").replace(/[ \t]{2,}/g, " ").trim();
+        }
         function simpleHash(value) {
             let hash = 0;
             for (let index = 0; index < value.length; index += 1) {
@@ -404,7 +492,8 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                     parts.push(`<p>${anchor}</p>`);
                     return;
                 }
-                parts.push(`<img href="${xmlAttr(src)}" caption="${xmlAttr(caption || "图片")}"/>`);
+                const captionAttr = caption?.trim() ? ` caption="${xmlAttr(caption)}"` : "";
+                parts.push(`<img href="${xmlAttr(src)}"${captionAttr}/>`);
             };
             const aceLines = Array.from(root.querySelectorAll(".ace-line"));
             if (!aceLines.length) {
@@ -422,7 +511,7 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                     else if (/^!\[/.test(line)) {
                         const match = line.match(/^!\[([^\]]*)]\((.*)\)$/);
                         if (match)
-                            appendImage(match[2], match[1] || "图片");
+                            appendImage(match[2], match[1]);
                     }
                     else {
                         parts.push(`<p>${xmlEscape(line)}</p>`);
@@ -455,11 +544,11 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                         const src = imageSource(img);
                         if (!src)
                             continue;
-                        appendImage(src, img.getAttribute("alt") || img.getAttribute("title") || "图片");
+                        appendImage(src, img.getAttribute("alt") || img.getAttribute("title") || undefined);
                     }
                     continue;
                 }
-                const text = xmlEscape(inlineMarkdown(el).replace(/[\u200b-\u200d\ufeff]/g, "").trim());
+                const text = inlineLarkXml(el);
                 if (!text)
                     continue;
                 const listKind = listKindFromAceLine(el);
@@ -468,12 +557,9 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                     continue;
                 }
                 closeList();
-                if (className.includes("heading-h2"))
-                    parts.push(`<h2>${text}</h2>`);
-                else if (className.includes("heading-h3"))
-                    parts.push(`<h3>${text}</h3>`);
-                else if (className.includes("heading-h4"))
-                    parts.push(`<h4>${text}</h4>`);
+                const headingTag = aceHeadingTag(el);
+                if (headingTag)
+                    parts.push(`<${headingTag}>${text}</${headingTag}>`);
                 else
                     parts.push(`<p>${text}</p>`);
             }

@@ -256,8 +256,8 @@ function withSourceLink(xml, data) {
 }
 function replaceGifAnchorsWithLinkedImages(xml, anchors) {
     return anchors.reduce((content, anchor) => {
-        const caption = xmlAttr(anchor.caption || `GIF 图片 ${anchor.order + 1}`);
-        const image = `<img href="${xmlAttr(anchor.src)}" caption="${caption}"/>`;
+        const caption = anchor.caption?.trim() ? ` caption="${xmlAttr(anchor.caption)}"` : "";
+        const image = `<img href="${xmlAttr(anchor.src)}"${caption}/>`;
         return content.replace(new RegExp(`<p>\\s*${escapeRegExp(anchor.anchor)}\\s*</p>`, "g"), image);
     }, xml);
 }
@@ -487,7 +487,7 @@ async function insertGifImagesAtAnchors(doc, data, options, logPath) {
             });
             continue;
         }
-        const mediaData = await runLarkCli([
+        const mediaInsertArgs = [
             "docs",
             "+media-insert",
             "--doc",
@@ -495,12 +495,12 @@ async function insertGifImagesAtAnchors(doc, data, options, logPath) {
             "--file",
             larkCliSafeFilePath(gifFile),
             "--align",
-            "center",
-            "--caption",
-            anchor.caption || `GIF 图片 ${anchor.order + 1}`,
-            "--as",
-            options.identity ?? "user"
-        ], options, logPath, "update");
+            "center"
+        ];
+        if (anchor.caption?.trim())
+            mediaInsertArgs.push("--caption", anchor.caption);
+        mediaInsertArgs.push("--as", options.identity ?? "user");
+        const mediaData = await runLarkCli(mediaInsertArgs, options, logPath, "update");
         const gifBlockId = findFirstStringByKey(mediaData, "block_id");
         if (!gifBlockId) {
             throw new LarkSyncError(`GIF 已上传但未返回图片 block_id：${gifFile}`);

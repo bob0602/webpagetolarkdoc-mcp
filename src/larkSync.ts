@@ -299,8 +299,8 @@ function withSourceLink(xml: string, data: WebpageExtraction): string {
 
 function replaceGifAnchorsWithLinkedImages(xml: string, anchors: LarkGifAnchor[]): string {
   return anchors.reduce((content, anchor) => {
-    const caption = xmlAttr(anchor.caption || `GIF 图片 ${anchor.order + 1}`);
-    const image = `<img href="${xmlAttr(anchor.src)}" caption="${caption}"/>`;
+    const caption = anchor.caption?.trim() ? ` caption="${xmlAttr(anchor.caption)}"` : "";
+    const image = `<img href="${xmlAttr(anchor.src)}"${caption}/>`;
     return content.replace(new RegExp(`<p>\\s*${escapeRegExp(anchor.anchor)}\\s*</p>`, "g"), image);
   }, xml);
 }
@@ -562,21 +562,21 @@ async function insertGifImagesAtAnchors(doc: LarkDocumentRef, data: WebpageExtra
       continue;
     }
 
+    const mediaInsertArgs = [
+      "docs",
+      "+media-insert",
+      "--doc",
+      docRef,
+      "--file",
+      larkCliSafeFilePath(gifFile),
+      "--align",
+      "center"
+    ];
+    if (anchor.caption?.trim()) mediaInsertArgs.push("--caption", anchor.caption);
+    mediaInsertArgs.push("--as", options.identity ?? "user");
+
     const mediaData = await runLarkCli(
-      [
-        "docs",
-        "+media-insert",
-        "--doc",
-        docRef,
-        "--file",
-        larkCliSafeFilePath(gifFile),
-        "--align",
-        "center",
-        "--caption",
-        anchor.caption || `GIF 图片 ${anchor.order + 1}`,
-        "--as",
-        options.identity ?? "user"
-      ],
+      mediaInsertArgs,
       options,
       logPath,
       "update"

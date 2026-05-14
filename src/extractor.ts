@@ -288,6 +288,10 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
         return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>").trim();
       }
 
+      function xmlText(value: string): string {
+        return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>");
+      }
+
       function xmlAttr(value: string): string {
         return xmlEscape(value).replace(/"/g, "&quot;");
       }
@@ -409,6 +413,82 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
         return /(?:^|\s)ol-/.test(className) ? "ol" : "ul";
       }
 
+      function aceHeadingTag(el: Element): "h3" | "h4" | "h5" | undefined {
+        const className = String(el.className || "");
+        // Feishu Help Center ace-line heading classes are one level higher than their visual/article hierarchy.
+        if (className.includes("heading-h2")) return "h3";
+        if (className.includes("heading-h3")) return "h4";
+        if (className.includes("heading-h4")) return "h5";
+        return undefined;
+      }
+
+      function inlineLarkXml(root: Element): string {
+        const ignoredInlineTags = new Set(["script", "style", "noscript", "template", "img"]);
+        const rootElement = root;
+
+        function hasStyledAncestor(node: Node, predicate: (el: Element) => boolean): boolean {
+          let current = node.parentElement;
+          while (current && current !== rootElement.parentElement) {
+            if (predicate(current)) return true;
+            if (current === rootElement) break;
+            current = current.parentElement;
+          }
+          return false;
+        }
+
+        function currentLink(node: Node): string | undefined {
+          let current = node.parentElement;
+          while (current && current !== rootElement.parentElement) {
+            if (current instanceof HTMLAnchorElement && current.href) return current.href;
+            if (current === rootElement) break;
+            current = current.parentElement;
+          }
+          return undefined;
+        }
+
+        function wrapText(rawText: string, source: Node): string {
+          const text = rawText.replace(/[\u200b-\u200d\ufeff]/g, "").replace(/\s+/g, " ");
+          if (!text.trim()) return "";
+          const href = currentLink(source);
+          const bold = hasStyledAncestor(source, (el) => {
+            const tag = el.tagName.toLowerCase();
+            const weight = Number.parseInt(window.getComputedStyle(el).fontWeight, 10);
+            return tag === "strong" || tag === "b" || weight >= 600;
+          });
+          const italic = hasStyledAncestor(source, (el) => {
+            const tag = el.tagName.toLowerCase();
+            return tag === "em" || tag === "i" || window.getComputedStyle(el).fontStyle === "italic";
+          });
+          const deleted = hasStyledAncestor(source, (el) => {
+            const tag = el.tagName.toLowerCase();
+            return tag === "del" || tag === "s";
+          });
+          const underline = hasStyledAncestor(source, (el) => {
+            const tag = el.tagName.toLowerCase();
+            return tag === "u" || window.getComputedStyle(el).textDecorationLine.includes("underline");
+          });
+          const code = hasStyledAncestor(source, (el) => el.tagName.toLowerCase() === "code");
+
+          let content = xmlText(text);
+          if (code) content = `<code>${content}</code>`;
+          if (underline) content = `<u>${content}</u>`;
+          if (deleted) content = `<del>${content}</del>`;
+          if (italic) content = `<em>${content}</em>`;
+          if (bold) content = `<b>${content}</b>`;
+          if (href) content = `<a href="${xmlAttr(href)}">${content}</a>`;
+          return content;
+        }
+
+        function renderNode(node: Node): string {
+          if (node.nodeType === Node.TEXT_NODE) return wrapText(node.textContent ?? "", node);
+          if (!(node instanceof Element) || !visible(node) || ignoredInlineTags.has(node.tagName.toLowerCase())) return "";
+          if (node.tagName.toLowerCase() === "br") return "<br/>";
+          return Array.from(node.childNodes).map(renderNode).join("");
+        }
+
+        return Array.from(root.childNodes).map(renderNode).join("").replace(/[ \t]{2,}/g, " ").trim();
+      }
+
       function simpleHash(value: string): string {
         let hash = 0;
         for (let index = 0; index < value.length; index += 1) {
@@ -428,7 +508,7 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
       function renderLarkXml(root: Element, title: string): { xml: string; gifAnchors: Array<{ anchor: string; src: string; caption?: string; order: number }> } {
         const parts: string[] = [`<title>${xmlEscape(title || document.title || "网页正文")}</title>`];
         const gifAnchors: Array<{ anchor: string; src: string; caption?: string; order: number }> = [];
-        const appendImage = (src: string, caption: string) => {
+        const appendImage = (src: string, caption?: string) => {
           if (isGifImageSource(src)) {
             const order = gifAnchors.length;
             const anchor = `__MCP_GIF_ANCHOR_${order + 1}_${simpleHash(src)}__`;
@@ -436,7 +516,8 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
             parts.push(`<p>${anchor}</p>`);
             return;
           }
-          parts.push(`<img href="${xmlAttr(src)}" caption="${xmlAttr(caption || "图片")}"/>`);
+          const captionAttr = caption?.trim() ? ` caption="${xmlAttr(caption)}"` : "";
+          parts.push(`<img href="${xmlAttr(src)}"${captionAttr}/>`);
         };
         const aceLines = Array.from(root.querySelectorAll(".ace-line"));
         if (!aceLines.length) {
@@ -448,7 +529,7 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
             else if (/^\d+\.\s+/.test(line)) parts.push(`<ol><li seq="auto">${xmlEscape(line.replace(/^\d+\.\s+/, ""))}</li></ol>`);
             else if (/^!\[/.test(line)) {
               const match = line.match(/^!\[([^\]]*)]\((.*)\)$/);
-              if (match) appendImage(match[2], match[1] || "图片");
+              if (match) appendImage(match[2], match[1]);
             } else {
               parts.push(`<p>${xmlEscape(line)}</p>`);
             }
@@ -480,12 +561,12 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
             for (const img of Array.from(el.querySelectorAll("img"))) {
               const src = imageSource(img);
               if (!src) continue;
-              appendImage(src, img.getAttribute("alt") || img.getAttribute("title") || "图片");
+              appendImage(src, img.getAttribute("alt") || img.getAttribute("title") || undefined);
             }
             continue;
           }
 
-          const text = xmlEscape(inlineMarkdown(el).replace(/[\u200b-\u200d\ufeff]/g, "").trim());
+          const text = inlineLarkXml(el);
           if (!text) continue;
 
           const listKind = listKindFromAceLine(el);
@@ -495,9 +576,8 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
           }
 
           closeList();
-          if (className.includes("heading-h2")) parts.push(`<h2>${text}</h2>`);
-          else if (className.includes("heading-h3")) parts.push(`<h3>${text}</h3>`);
-          else if (className.includes("heading-h4")) parts.push(`<h4>${text}</h4>`);
+          const headingTag = aceHeadingTag(el);
+          if (headingTag) parts.push(`<${headingTag}>${text}</${headingTag}>`);
           else parts.push(`<p>${text}</p>`);
         }
         closeList();
