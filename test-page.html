@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>测试页面 - 网页内容解析器</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      color: #111827;
+      background-color: #f9fafb;
+    }
+    .hero {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      color: white;
+      padding: 32px;
+      border-radius: 16px;
+      margin-bottom: 24px;
+    }
+    .hero h1 {
+      margin: 0 0 8px 0;
+      font-size: 28px;
+    }
+    .hero p {
+      margin: 0;
+      opacity: 0.95;
+      font-size: 16px;
+    }
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);
+      margin-bottom: 16px;
+    }
+    .section-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 12px 0;
+      color: #111827;
+    }
+    .list {
+      margin: 0;
+      padding-left: 20px;
+    }
+    .list li {
+      margin-bottom: 8px;
+    }
+    a {
+      color: #4f46e5;
+      text-decoration: underline;
+    }
+    .image-container {
+      margin: 12px 0;
+    }
+    .bg-image-section {
+      background-image: url('https://picsum.photos/800/200');
+      background-size: cover;
+      background-position: center;
+      color: white;
+      padding: 48px 24px;
+      border-radius: 12px;
+      text-align: center;
+    }
+    .code {
+      background: #1f2937;
+      color: #e5e7eb;
+      padding: 16px;
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      overflow-x: auto;
+    }
+    .quote {
+      border-left: 4px solid #6366f1;
+      padding-left: 16px;
+      font-style: italic;
+      color: #4b5563;
+      margin: 12px 0;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <h1>网页内容解析器测试</h1>
+      <p>这是一个用于验证 MCP 网页解析器完整能力的测试页面，包含文本、链接、图片、背景图、代码、引用等元素。</p>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">1. 段落与文本格式</h2>
+      <p>这里是一段普通文本，包含一些 <strong>加粗内容</strong>、<em>斜体内容</em> 和 <u>下划线内容</u>。</p>
+      <p>此外还有一个 <a href="https://example.com" title="跳转到示例网站">链接到 example.com</a> 的超链接。</p>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">2. 列表与引用</h2>
+      <ul class="list">
+        <li>无序列表项 1</li>
+        <li>无序列表项 2（带 <a href="#">内嵌链接</a>）</li>
+        <li>无序列表项 3</li>
+      </ul>
+      <ol class="list">
+        <li>有序列表项 A</li>
+        <li>有序列表项 B</li>
+        <li>有序列表项 C</li>
+      </ol>
+      <blockquote class="quote">
+        "一个伟大的思想，可能只是平凡想法的组合。" —— 佚名
+      </blockquote>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">3. 图片元素</h2>
+      <div class="image-container">
+        <img src="https://picsum.photos/600/300?random=1" alt="示例图片 1" title="这是第一张示例图片" style="max-width: 100%; border-radius: 8px;">
+      </div>
+      <figure>
+        <img src="https://picsum.photos/600/300?random=2" alt="示例图片 2" style="max-width: 100%; border-radius: 8px;">
+        <figcaption>带有标题的图片示例</figcaption>
+      </figure>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">4. 背景图与代码</h2>
+      <div class="bg-image-section">
+        <h2 style="margin:0;">这里是背景图片区域</h2>
+        <p style="margin:8px 0 0 0; font-size:16px; opacity:0.9;">背景图会被自动识别并记录</p>
+      </div>
+      <div style="margin-top:16px;">
+        <h3 style="margin:0 0 8px 0; font-size:16px;">代码块示例</h3>
+        <pre class="code">const greeting = "Hello, MCP!";
+console.log(greeting);</pre>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">5. 表格</h2>
+      <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+          <tr style="background: #f3f4f6;">
+            <th style="border:1px solid #e5e7eb; padding:8px;">功能</th>
+            <th style="border:1px solid #e5e7eb; padding:8px;">状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="border:1px solid #e5e7eb; padding:8px;">文本提取</td>
+            <td style="border:1px solid #e5e7eb; padding:8px;">✅ 已实现</td>
+          </tr>
+          <tr>
+            <td style="border:1px solid #e5e7eb; padding:8px;">图片识别</td>
+            <td style="border:1px solid #e5e7eb; padding:8px;">✅ 已实现</td>
+          </tr>
+          <tr>
+            <td style="border:1px solid #e5e7eb; padding:8px;">样式采集</td>
+            <td style="border:1px solid #e5e7eb; padding:8px;">✅ 已实现</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
