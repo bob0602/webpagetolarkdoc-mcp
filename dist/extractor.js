@@ -410,8 +410,13 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
             const middle = Math.floor(sorted.length / 2);
             return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
         }
-        function visualHeadingTag(el, bodyFontSize) {
+        function isNumberedChapterTitle(text) {
+            return /^[一二三四五六七八九十]+、\S+/.test(text.trim());
+        }
+        function visualHeadingTag(el, bodyFontSize, text) {
             const className = String(el.className || "");
+            if (isNumberedChapterTitle(text))
+                return "h2";
             const size = fontSizePx(el);
             const weight = fontWeightValue(el);
             const isHeadingLike = /heading-h\d/.test(className) || /^h[1-6]$/i.test(el.tagName) || weight >= 600;
@@ -631,7 +636,7 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                     continue;
                 }
                 closeList();
-                const headingTag = visualHeadingTag(el, bodyFontSize);
+                const headingTag = visualHeadingTag(el, bodyFontSize, el.textContent || "");
                 if (headingTag)
                     parts.push(`<${headingTag}>${text}</${headingTag}>`);
                 else

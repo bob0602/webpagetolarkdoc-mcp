@@ -441,8 +441,13 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
         return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
       }
 
-      function visualHeadingTag(el: Element, bodyFontSize: number): "h1" | "h2" | "h3" | "h4" | "h5" | undefined {
+      function isNumberedChapterTitle(text: string): boolean {
+        return /^[一二三四五六七八九十]+、\S+/.test(text.trim());
+      }
+
+      function visualHeadingTag(el: Element, bodyFontSize: number, text: string): "h1" | "h2" | "h3" | "h4" | "h5" | undefined {
         const className = String(el.className || "");
+        if (isNumberedChapterTitle(text)) return "h2";
         const size = fontSizePx(el);
         const weight = fontWeightValue(el);
         const isHeadingLike = /heading-h\d/.test(className) || /^h[1-6]$/i.test(el.tagName) || weight >= 600;
@@ -651,7 +656,7 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
           }
 
           closeList();
-          const headingTag = visualHeadingTag(el, bodyFontSize);
+          const headingTag = visualHeadingTag(el, bodyFontSize, el.textContent || "");
           if (headingTag) parts.push(`<${headingTag}>${text}</${headingTag}>`);
           else parts.push(`<p>${text}</p>`);
         }
