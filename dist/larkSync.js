@@ -89,33 +89,6 @@ function normalizeCliDoc(data) {
         exists: true
     };
 }
-function normalizeSearchResults(data) {
-    if (!data || typeof data !== "object")
-        return [];
-    const record = data;
-    const nested = typeof record.data === "object" && record.data !== null ? record.data : record;
-    const candidates = [nested.docs, nested.items, nested.results, nested.entities, nested.data, record.results, record.items];
-    const list = candidates.find(Array.isArray);
-    if (!list)
-        return [];
-    return list
-        .map((item) => {
-        const meta = typeof item.result_meta === "object" && item.result_meta !== null ? item.result_meta : item;
-        const title = String(meta.title ?? meta.title_highlighted ?? item.title ?? "").replace(/<\/?h[b]?>/g, "").trim();
-        const docUrl = String(meta.url ?? meta.docs_url ?? item.url ?? "").trim();
-        const token = String(meta.token ?? meta.obj_token ?? meta.doc_token ?? meta.doc_id ?? item.token ?? "").trim();
-        const type = String(meta.doc_type ?? meta.obj_type ?? meta.type ?? item.doc_type ?? "").trim();
-        return {
-            title,
-            docUrl: docUrl || undefined,
-            docId: token || undefined,
-            token: token || undefined,
-            type: type || undefined,
-            exists: true
-        };
-    })
-        .filter((doc) => doc.title || doc.docUrl || doc.docId);
-}
 async function runLarkCli(args, options, logPath, action) {
     const retries = options.retries ?? DEFAULT_RETRIES;
     const baseDelay = options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
@@ -284,27 +257,7 @@ async function findExistingDocument(options, logPath) {
             exists: true
         };
     }
-    if (!target.title)
-        return undefined;
-    const filter = { doc_types: ["DOC", "DOCX"], only_title: true };
-    if (target.folderToken)
-        filter.folder_tokens = [target.folderToken];
-    const data = await runLarkCli([
-        "docs",
-        "+search",
-        "--query",
-        `intitle:"${target.title}"`,
-        "--filter",
-        JSON.stringify(filter),
-        "--page-size",
-        "10",
-        "--format",
-        "json",
-        "--as",
-        options.identity ?? "user"
-    ], options, logPath, "search");
-    const exact = normalizeSearchResults(data).find((doc) => doc.title === target.title || doc.title.includes(target.title ?? ""));
-    return exact;
+    return undefined;
 }
 async function createDocument(content, docFormat, options, logPath) {
     const args = [
@@ -338,7 +291,7 @@ async function updateDocument(doc, chunks, options, logPath, docFormat = "markdo
     const docRef = doc.docUrl ?? doc.docId ?? doc.token;
     if (!docRef)
         throw new LarkSyncError("目标文档缺少 docUrl/docId，无法更新。");
-    const updateMode = options.updateMode ?? "append";
+    const updateMode = options.updateMode ?? "overwrite";
     for (const [index, chunk] of chunks.entries()) {
         const command = updateMode === "overwrite" && index === 0 ? "overwrite" : "append";
         const content = updateMode === "append" && index === 0 ? (docFormat === "xml" ? `<p>---</p>\n${chunk}` : `\n---\n\n${chunk}`) : chunk;
@@ -572,7 +525,7 @@ export async function syncExtractionToLark(data, options) {
         });
         return {
             action: "created",
-            updateMode: options.updateMode ?? "append",
+            updateMode: options.updateMode ?? "overwrite",
             document: doc,
             chunksWritten: chunks.length,
             imagesUploaded,
@@ -594,7 +547,7 @@ export async function syncExtractionToLark(data, options) {
     });
     return {
         action: "updated",
-        updateMode: options.updateMode ?? "append",
+        updateMode: options.updateMode ?? "overwrite",
         document: existing,
         chunksWritten: chunks.length,
         imagesUploaded,

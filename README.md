@@ -64,22 +64,21 @@ npm run build
 
 解析网页并同步到飞书云文档。处理流程：
 
-- 先解析网页，生成 `webpage.json`、`preview.html`、`lark-content.md`。
-- 优先通过 `docUrl` / `docToken` 校验目标文档是否存在。
-- 未传文档 URL/Token 时，按 `title`、`folderToken` 搜索同名文档。
-- 文档不存在时自动创建新文档，支持创建到指定云空间文件夹或知识库位置。
-- 文档存在时按 `append` 或 `overwrite` 更新，保留飞书侧权限、标签、版本历史等元数据。
-- 内容超过限制时分块写入，正文默认优先使用飞书 XML 以保留标题、段落和列表结构。
+- 先解析网页，生成 `webpage.json`、`preview.html`、`lark-content.xml` / `lark-content.md`。
+- 仅在传入 `docUrl` / `docToken` 时校验并更新已有文档。
+- 未传文档 URL/Token 时始终创建新文档，不再按标题搜索同名文档。
+- 文档存在时默认 `overwrite`，即清空原文档内容后写入新内容。
+- 内容超过限制时分块写入，正文默认优先使用飞书 XML 以保留标题、段落、列表和分栏图片结构。
 - 普通图片按原文位置写入 XML 图片块；GIF 图片启用特殊处理模式：先写占位符，再用 `docs +media-insert` 上传本地 `.gif`，移动到占位位置后删除占位符，避免 GIF 被转成静态 JPEG。
 - 每次搜索、创建、更新、重试和失败都会写入 `lark-sync.jsonl`。
 
 核心参数：
 
-- `larkTarget.title`：目标文档标题，未传 `docUrl/docToken` 时用于查找和创建。
-- `larkTarget.docUrl` / `larkTarget.docToken`：直接指定目标文档。
-- `larkTarget.folderToken`：限定搜索/创建所在云空间文件夹。
+- `larkTarget.title`：目标文档标题，未传 `docUrl/docToken` 时用于创建新文档。
+- `larkTarget.docUrl` / `larkTarget.docToken`：直接指定要清空并覆盖写入的已有文档。
+- `larkTarget.folderToken`：创建新文档所在云空间文件夹。
 - `larkTarget.wikiNode` / `larkTarget.wikiSpace`：创建到知识库节点或空间。
-- `updateMode`：`append` 增量追加，`overwrite` 全量覆盖。
+- `updateMode`：默认 `overwrite` 全量覆盖；可显式设为 `append` 增量追加。
 - `identity`：`user` 或 `bot`，默认 `user`。
 - `maxChunkChars`：内容过大时的分块大小，默认 `14000`。
 - `uploadImages`：默认 `true`。XML 模式下普通图片保留原位外链写入，GIF 自动走保真上传并原位移动；设为 `false` 时 GIF 会降级为普通外链图片。
@@ -97,8 +96,7 @@ npm run extract -- https://example.com --outputDir output/example
 npm run extract -- https://example.com \
   --outputDir output/example \
   --syncLark true \
-  --larkTitle "网页归档 - Example" \
-  --updateMode append
+  --larkTitle "网页归档 - Example"
 ```
 
 更新指定已有文档：

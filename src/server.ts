@@ -29,10 +29,10 @@ const extractSchema = {
 };
 
 const larkTargetSchema = z.object({
-  title: z.string().optional().describe("目标飞书文档标题；未传 docUrl/docToken 时用于搜索和创建"),
-  docUrl: z.string().optional().describe("目标飞书文档 URL，存在时优先直接校验该文档"),
-  docToken: z.string().optional().describe("目标飞书文档 token，存在时优先直接校验该文档"),
-  folderToken: z.string().optional().describe("创建或搜索文档时限定的云空间文件夹 token"),
+  title: z.string().optional().describe("目标飞书文档标题；未传 docUrl/docToken 时创建新文档"),
+  docUrl: z.string().optional().describe("目标飞书文档 URL，存在时直接覆盖更新该文档"),
+  docToken: z.string().optional().describe("目标飞书文档 token，存在时直接覆盖更新该文档"),
+  folderToken: z.string().optional().describe("创建文档时指定的云空间文件夹 token"),
   wikiNode: z.string().optional().describe("创建到指定知识库节点"),
   wikiSpace: z.string().optional().describe("创建到指定知识空间，my_library 表示个人知识库")
 });
@@ -40,7 +40,7 @@ const larkTargetSchema = z.object({
 const syncSchema = {
   ...extractSchema,
   larkTarget: larkTargetSchema.describe("飞书云文档目标信息"),
-  updateMode: z.enum(["append", "overwrite"]).default("append").describe("文档存在时的更新策略：append 增量追加，overwrite 全量覆盖"),
+  updateMode: z.enum(["append", "overwrite"]).default("overwrite").describe("文档存在时的更新策略：默认 overwrite 清空后写入；append 为增量追加"),
   identity: z.enum(["user", "bot"]).default("user").describe("飞书 CLI 调用身份"),
   maxChunkChars: z.number().int().min(3000).max(30000).default(14000).describe("内容过大时的 Markdown 分块大小"),
   uploadImages: z.boolean().default(true).describe("是否上传本地缓存图片；XML 模式下普通图片原位外链写入，GIF 自动用 media-insert 保真插入到原位置"),
@@ -106,7 +106,7 @@ server.tool(
 
 server.tool(
   "sync_webpage_to_lark_doc",
-  "解析指定网页并同步到飞书云文档：先检查目标文档是否存在，不存在则创建，存在则按 append/overwrite 更新。",
+  "解析指定网页并同步到飞书云文档：未传 docUrl/docToken 时新建文档；传入已有文档时默认清空后写入。",
   syncSchema,
   async (args) => {
     const outputDir = args.outputDir ?? path.resolve("output", createRunId(args.url));

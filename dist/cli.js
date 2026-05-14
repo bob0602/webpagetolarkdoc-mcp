@@ -47,7 +47,7 @@ if (maybeUrl) {
                 wikiNode: typeof args.larkWikiNode === "string" ? args.larkWikiNode : undefined,
                 wikiSpace: typeof args.larkWikiSpace === "string" ? args.larkWikiSpace : undefined
             },
-            updateMode: args.updateMode === "overwrite" ? "overwrite" : "append",
+            updateMode: args.updateMode === "append" ? "append" : "overwrite",
             identity: args.identity === "bot" ? "bot" : "user",
             maxChunkChars: typeof args.maxChunkChars === "string" ? Number(args.maxChunkChars) : undefined,
             uploadImages: args.uploadImages === "false" ? false : true,

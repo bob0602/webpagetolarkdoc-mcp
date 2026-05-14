@@ -413,13 +413,47 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
         return /(?:^|\s)ol-/.test(className) ? "ol" : "ul";
       }
 
-      function aceHeadingTag(el: Element): "h3" | "h4" | "h5" | undefined {
+      function fallbackAceHeadingTag(el: Element): "h3" | "h4" | "h5" | undefined {
         const className = String(el.className || "");
         // Feishu Help Center ace-line heading classes are one level higher than their visual/article hierarchy.
         if (className.includes("heading-h2")) return "h3";
         if (className.includes("heading-h3")) return "h4";
         if (className.includes("heading-h4")) return "h5";
         return undefined;
+      }
+
+      function fontSizePx(el: Element): number {
+        const value = Number.parseFloat(window.getComputedStyle(el).fontSize || "");
+        return Number.isFinite(value) ? value : 0;
+      }
+
+      function fontWeightValue(el: Element): number {
+        const raw = window.getComputedStyle(el).fontWeight;
+        if (raw === "bold") return 700;
+        const value = Number.parseInt(raw, 10);
+        return Number.isFinite(value) ? value : 400;
+      }
+
+      function median(values: number[]): number {
+        const sorted = values.filter((value) => value > 0).sort((a, b) => a - b);
+        if (!sorted.length) return 16;
+        const middle = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+      }
+
+      function visualHeadingTag(el: Element, bodyFontSize: number): "h1" | "h2" | "h3" | "h4" | "h5" | undefined {
+        const className = String(el.className || "");
+        const size = fontSizePx(el);
+        const weight = fontWeightValue(el);
+        const isHeadingLike = /heading-h\d/.test(className) || /^h[1-6]$/i.test(el.tagName) || weight >= 600;
+        if (!isHeadingLike || !size) return fallbackAceHeadingTag(el);
+
+        const diff = size - bodyFontSize;
+        if (diff >= 10) return "h1";
+        if (diff >= 7) return "h2";
+        if (diff >= 4) return "h3";
+        if (diff >= 2 && weight >= 600) return "h4";
+        return fallbackAceHeadingTag(el);
       }
 
       function inlineLarkXml(root: Element): string {
@@ -508,16 +542,51 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
       function renderLarkXml(root: Element, title: string): { xml: string; gifAnchors: Array<{ anchor: string; src: string; caption?: string; order: number }> } {
         const parts: string[] = [`<title>${xmlEscape(title || document.title || "网页正文")}</title>`];
         const gifAnchors: Array<{ anchor: string; src: string; caption?: string; order: number }> = [];
-        const appendImage = (src: string, caption?: string) => {
+        const imageXml = (src: string, caption?: string): string => {
           if (isGifImageSource(src)) {
             const order = gifAnchors.length;
             const anchor = `__MCP_GIF_ANCHOR_${order + 1}_${simpleHash(src)}__`;
             gifAnchors.push({ anchor, src: new URL(src, document.baseURI).href, caption, order });
-            parts.push(`<p>${anchor}</p>`);
-            return;
+            return `<p>${anchor}</p>`;
           }
           const captionAttr = caption?.trim() ? ` caption="${xmlAttr(caption)}"` : "";
-          parts.push(`<img href="${xmlAttr(src)}"${captionAttr}/>`);
+          return `<img href="${xmlAttr(src)}"${captionAttr}/>`;
+        };
+        const appendImage = (src: string, caption?: string) => {
+          parts.push(imageXml(src, caption));
+        };
+        const renderImageRows = (images: HTMLImageElement[]): string[] => {
+          const rows: HTMLImageElement[][] = [];
+          for (const img of images.sort((a, b) => {
+            const rectA = a.getBoundingClientRect();
+            const rectB = b.getBoundingClientRect();
+            return Math.abs(rectA.top - rectB.top) > 24 ? rectA.top - rectB.top : rectA.left - rectB.left;
+          })) {
+            const rect = img.getBoundingClientRect();
+            const row = rows.find((candidate) => {
+              const first = candidate[0]?.getBoundingClientRect();
+              return first ? Math.abs(first.top - rect.top) <= Math.max(24, Math.min(first.height, rect.height) * 0.35) : false;
+            });
+            if (row) row.push(img);
+            else rows.push([img]);
+          }
+
+          return rows.map((row) => {
+            if (row.length === 1) {
+              const img = row[0];
+              return imageXml(imageSource(img), img.getAttribute("alt") || img.getAttribute("title") || undefined);
+            }
+            const totalWidth = row.reduce((sum, img) => sum + Math.max(img.getBoundingClientRect().width, 1), 0);
+            const columns = row
+              .map((img) => {
+                const ratio = Math.max(img.getBoundingClientRect().width, 1) / totalWidth;
+                const widthRatio = Math.round(ratio * 1000) / 1000;
+                const content = imageXml(imageSource(img), img.getAttribute("alt") || img.getAttribute("title") || undefined);
+                return `<column width-ratio="${widthRatio}">${content}</column>`;
+              })
+              .join("");
+            return `<grid>${columns}</grid>`;
+          });
         };
         const aceLines = Array.from(root.querySelectorAll(".ace-line"));
         if (!aceLines.length) {
@@ -536,6 +605,15 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
           }
           return { xml: parts.join("\n"), gifAnchors };
         }
+
+        const bodyFontSize = median(
+          aceLines
+            .filter((el) => {
+              const className = String(el.className || "");
+              return visible(el) && !className.includes("list-div") && !/heading-h\d/.test(className) && normalizeText(el.textContent || "").length > 12;
+            })
+            .map(fontSizePx)
+        );
 
         let openList: "ol" | "ul" | undefined;
         const closeList = () => {
@@ -558,11 +636,8 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
           const className = String(el.className || "");
           if (className.includes("ace-line-image-wrapper")) {
             closeList();
-            for (const img of Array.from(el.querySelectorAll("img"))) {
-              const src = imageSource(img);
-              if (!src) continue;
-              appendImage(src, img.getAttribute("alt") || img.getAttribute("title") || undefined);
-            }
+            const images = Array.from(el.querySelectorAll("img")).filter((img) => Boolean(imageSource(img)));
+            parts.push(...renderImageRows(images));
             continue;
           }
 
@@ -576,7 +651,7 @@ async function collectSnapshot(page: Page, includeStyles: boolean, includeHtml: 
           }
 
           closeList();
-          const headingTag = aceHeadingTag(el);
+          const headingTag = visualHeadingTag(el, bodyFontSize);
           if (headingTag) parts.push(`<${headingTag}>${text}</${headingTag}>`);
           else parts.push(`<p>${text}</p>`);
         }

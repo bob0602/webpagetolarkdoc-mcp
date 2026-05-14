@@ -381,7 +381,7 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                 return undefined;
             return /(?:^|\s)ol-/.test(className) ? "ol" : "ul";
         }
-        function aceHeadingTag(el) {
+        function fallbackAceHeadingTag(el) {
             const className = String(el.className || "");
             // Feishu Help Center ace-line heading classes are one level higher than their visual/article hierarchy.
             if (className.includes("heading-h2"))
@@ -391,6 +391,42 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
             if (className.includes("heading-h4"))
                 return "h5";
             return undefined;
+        }
+        function fontSizePx(el) {
+            const value = Number.parseFloat(window.getComputedStyle(el).fontSize || "");
+            return Number.isFinite(value) ? value : 0;
+        }
+        function fontWeightValue(el) {
+            const raw = window.getComputedStyle(el).fontWeight;
+            if (raw === "bold")
+                return 700;
+            const value = Number.parseInt(raw, 10);
+            return Number.isFinite(value) ? value : 400;
+        }
+        function median(values) {
+            const sorted = values.filter((value) => value > 0).sort((a, b) => a - b);
+            if (!sorted.length)
+                return 16;
+            const middle = Math.floor(sorted.length / 2);
+            return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+        }
+        function visualHeadingTag(el, bodyFontSize) {
+            const className = String(el.className || "");
+            const size = fontSizePx(el);
+            const weight = fontWeightValue(el);
+            const isHeadingLike = /heading-h\d/.test(className) || /^h[1-6]$/i.test(el.tagName) || weight >= 600;
+            if (!isHeadingLike || !size)
+                return fallbackAceHeadingTag(el);
+            const diff = size - bodyFontSize;
+            if (diff >= 10)
+                return "h1";
+            if (diff >= 7)
+                return "h2";
+            if (diff >= 4)
+                return "h3";
+            if (diff >= 2 && weight >= 600)
+                return "h4";
+            return fallbackAceHeadingTag(el);
         }
         function inlineLarkXml(root) {
             const ignoredInlineTags = new Set(["script", "style", "noscript", "template", "img"]);
@@ -484,16 +520,52 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
         function renderLarkXml(root, title) {
             const parts = [`<title>${xmlEscape(title || document.title || "网页正文")}</title>`];
             const gifAnchors = [];
-            const appendImage = (src, caption) => {
+            const imageXml = (src, caption) => {
                 if (isGifImageSource(src)) {
                     const order = gifAnchors.length;
                     const anchor = `__MCP_GIF_ANCHOR_${order + 1}_${simpleHash(src)}__`;
                     gifAnchors.push({ anchor, src: new URL(src, document.baseURI).href, caption, order });
-                    parts.push(`<p>${anchor}</p>`);
-                    return;
+                    return `<p>${anchor}</p>`;
                 }
                 const captionAttr = caption?.trim() ? ` caption="${xmlAttr(caption)}"` : "";
-                parts.push(`<img href="${xmlAttr(src)}"${captionAttr}/>`);
+                return `<img href="${xmlAttr(src)}"${captionAttr}/>`;
+            };
+            const appendImage = (src, caption) => {
+                parts.push(imageXml(src, caption));
+            };
+            const renderImageRows = (images) => {
+                const rows = [];
+                for (const img of images.sort((a, b) => {
+                    const rectA = a.getBoundingClientRect();
+                    const rectB = b.getBoundingClientRect();
+                    return Math.abs(rectA.top - rectB.top) > 24 ? rectA.top - rectB.top : rectA.left - rectB.left;
+                })) {
+                    const rect = img.getBoundingClientRect();
+                    const row = rows.find((candidate) => {
+                        const first = candidate[0]?.getBoundingClientRect();
+                        return first ? Math.abs(first.top - rect.top) <= Math.max(24, Math.min(first.height, rect.height) * 0.35) : false;
+                    });
+                    if (row)
+                        row.push(img);
+                    else
+                        rows.push([img]);
+                }
+                return rows.map((row) => {
+                    if (row.length === 1) {
+                        const img = row[0];
+                        return imageXml(imageSource(img), img.getAttribute("alt") || img.getAttribute("title") || undefined);
+                    }
+                    const totalWidth = row.reduce((sum, img) => sum + Math.max(img.getBoundingClientRect().width, 1), 0);
+                    const columns = row
+                        .map((img) => {
+                        const ratio = Math.max(img.getBoundingClientRect().width, 1) / totalWidth;
+                        const widthRatio = Math.round(ratio * 1000) / 1000;
+                        const content = imageXml(imageSource(img), img.getAttribute("alt") || img.getAttribute("title") || undefined);
+                        return `<column width-ratio="${widthRatio}">${content}</column>`;
+                    })
+                        .join("");
+                    return `<grid>${columns}</grid>`;
+                });
             };
             const aceLines = Array.from(root.querySelectorAll(".ace-line"));
             if (!aceLines.length) {
@@ -519,6 +591,12 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                 }
                 return { xml: parts.join("\n"), gifAnchors };
             }
+            const bodyFontSize = median(aceLines
+                .filter((el) => {
+                const className = String(el.className || "");
+                return visible(el) && !className.includes("list-div") && !/heading-h\d/.test(className) && normalizeText(el.textContent || "").length > 12;
+            })
+                .map(fontSizePx));
             let openList;
             const closeList = () => {
                 if (openList) {
@@ -540,12 +618,8 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                 const className = String(el.className || "");
                 if (className.includes("ace-line-image-wrapper")) {
                     closeList();
-                    for (const img of Array.from(el.querySelectorAll("img"))) {
-                        const src = imageSource(img);
-                        if (!src)
-                            continue;
-                        appendImage(src, img.getAttribute("alt") || img.getAttribute("title") || undefined);
-                    }
+                    const images = Array.from(el.querySelectorAll("img")).filter((img) => Boolean(imageSource(img)));
+                    parts.push(...renderImageRows(images));
                     continue;
                 }
                 const text = inlineLarkXml(el);
@@ -557,7 +631,7 @@ async function collectSnapshot(page, includeStyles, includeHtml, maxDepth) {
                     continue;
                 }
                 closeList();
-                const headingTag = aceHeadingTag(el);
+                const headingTag = visualHeadingTag(el, bodyFontSize);
                 if (headingTag)
                     parts.push(`<${headingTag}>${text}</${headingTag}>`);
                 else
