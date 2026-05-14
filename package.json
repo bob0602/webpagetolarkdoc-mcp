@@ -4,11 +4,14 @@
   "description": "MCP server for high-fidelity webpage text, image, style, layout extraction and preview generation.",
   "type": "module",
   "bin": {
-    "webpage-content-reader-mcp": "./dist/server.js"
+    "webpage-content-reader-mcp": "./dist/server.js",
+    "webpage-reader-api": "./dist/api-server.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/server.ts",
+    "dev:api": "tsx src/api-server.ts",
+    "start:api": "node dist/api-server.js",
     "extract": "tsx src/cli.ts",
     "demo": "tsx demo-static-parse.ts",
     "typecheck": "tsc --noEmit"
