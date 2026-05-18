@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "webpage-to-larkdoc": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "git+https://github.com/bob0602/webpagetolarkdoc-mcp.git"
+      ]
+    }
+  }
+}

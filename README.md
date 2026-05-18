@@ -33,6 +33,24 @@ npm run build
 }
 ```
 
+### MCP 市场上传
+
+如果市场提示 zip 中缺少 `mcpServers` 字段，请上传仓库根目录的 `mcp.json`，或重新下载包含该文件的 GitHub zip。
+
+```json
+{
+  "mcpServers": {
+    "webpage-to-larkdoc": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "git+https://github.com/bob0602/webpagetolarkdoc-mcp.git"
+      ]
+    }
+  }
+}
+```
+
 ## MCP 工具
 
 ### `extract_webpage_content`
